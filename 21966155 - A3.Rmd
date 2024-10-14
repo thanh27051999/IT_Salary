@@ -1,0 +1,403 @@
+---
+title: "21966155 - A3"
+output: html_notebook
+---
+
+*) Loading all needed package:
+```{r}
+library(readr)
+library(readxl)
+library(ggplot2)
+library(tidyverse)
+library(dplyr)
+library(stringr)
+#install.packages("Hmisc")
+library(Hmisc)
+```
+
+TASK 1:
+```{r}
+employee_demographics <- read.csv("survey_employee_demographics.csv", na.strings = c("", "-", "--"))
+employee_employment_details <- read_excel("survey_employee_employment_details.xlsx", na = c("", "-", "--"))
+combined_employee <- merge(employee_demographics, employee_employment_details, by = "RecordID")
+combined_employee
+```
+
+TASK 2:
+  Task 2.a:
+```{r}
+describe(combined_employee)
+summary(combined_employee)
+```
+  
+  Task 2.c:
+  +) Change the name of data column and put them in the new dataframe. The new dataframe is "clean_combined_employee". This datafarme will also be used in the rest of the questions.
+```{r}
+clean_combined_employee <- combined_employee %>%
+  rename(
+    `Total Years of Experience` = TotalYearsOfExperience,
+    `Years of Experience in Germany` = YearsOfExperienceInGermany,
+    `Main Programming Language` = YourMainProgrammingLanguage,
+    `Other Programming Language` = OtherProgrammingLanguagesYouUseOften,
+    `Yearly Brutto Salary (EUR)` = YearlyBruttoSalaryInEUR,
+    `Yearly Bonus and Stocks (EUR)` = YearlyBonusAndStocksInEUR,
+    `Annual Brutto Salary Last Year` = AnnualBruttoSalaryOneYearAgo,
+    `Annual Bonus And Stocks Last Year` = AnnualBonusAndStocksOneYearAgo,
+    `Number of Vacation Days` = NumberOfVacationDays,
+    `Main Language At Work` = MainLanguageAtWork,
+    `Lost Job due to COVID19` = HaveYouLostYourJobDueToTheCoronavirusOutbreak,
+    `Kurzarbeit's Hours per Week` = HaveYouBeenForcedToHaveAShorterWorkingWeekKnownAsKurzarbeitIfYesHowManyHoursPerWeek,
+    `WFH Additional Monetary from Employer (2020, EUR)` = HaveYouReceivedAdditionalMonetarySupportFromYourEmployerDueToWorkFromHomeIfYesHowMuchIn2020InEUR
+  )
+clean_combined_employee
+```
+
+  +) Removing rows that have too many NAs (more than 5 - 25% of the total columns in the dataset), except the last 2 rows as they depend on the Yes/No answer in the column `Lost Job due to COVID19`:
+```{r}
+na_counts <- rowSums(is.na(clean_combined_employee[ , !(names(clean_combined_employee) %in% c("Kurzarbeit's Hours per Week", "WFH Additional Monetary from Employer (2020, EUR)"))]))
+clean_combined_employee <- clean_combined_employee[na_counts <= 5, ]
+```
+
+  +) Fixing inconsistency in the column "Total Years of Experience":
+```{r}
+#Modifying data entries:
+  ##Converting comma to decimal point in some data entries:
+clean_combined_employee$`Total Years of Experience` <- gsub(",", ".", clean_combined_employee$`Total Years of Experience`)
+
+#Extracting the first numeric part of some data entries:
+clean_combined_employee$`Total Years of Experience` <- str_extract(clean_combined_employee$`Total Years of Experience`, "\\d+\\.?\\d*")
+
+#Assigning a numeric value to data entry "less than year":
+clean_combined_employee$`Total Years of Experience`[clean_combined_employee$`Total Years of Experience` == "less than year"] <- "0.5" #assuming half a year for "less than a year"
+
+#Double check to ensure that all of entries are in the correct format:
+unique(clean_combined_employee$`Total Years of Experience`)
+```
+ 
+ +) Fixing inconsistency in the column "Years of Experience in Germany":
+```{r}
+#Modifying:
+ ##Replacing comma in data entries
+clean_combined_employee$`Years of Experience in Germany` <- gsub(",", ".", clean_combined_employee$`Years of Experience in Germany`)
+ ##Transferring text to numeric
+clean_combined_employee <- clean_combined_employee %>%
+  mutate (
+    `Years of Experience in Germany` = case_when(
+      `Years of Experience in Germany` == "⁰" ~ "0",
+      grepl("in Poland|in Switzerland", `Years of Experience in Germany`, ignore.case = TRUE) ~ "0",
+      grepl("less than year", `Years of Experience in Germany`, ignore.case = TRUE) ~ "0.5",
+      grepl("4 month", `Years of Experience in Germany`, ignore.case = TRUE) ~ "0.3",
+      grepl("3 month", `Years of Experience in Germany`, ignore.case = TRUE) ~ "0.25",
+      grepl("<1", `Years of Experience in Germany`, ignore.case = TRUE) ~ "0.8",
+      grepl("lab",`Years of Experience in Germany`, ignore.case = TRUE) ~ "0",
+      TRUE ~ `Years of Experience in Germany`
+    )
+  )
+#Double check to ensure that all of entries are in the correct format:
+unique(clean_combined_employee$`Years of Experience in Germany`)
+```
+  
+  +) Fixing inconsistency in the column "SeniorityLevel":
+```{r}
+#Standardizing data entries:
+clean_combined_employee <- clean_combined_employee %>%
+  mutate(
+    SeniorityLevel = case_when(
+      grepl("intern|student", SeniorityLevel, ignore.case = TRUE) ~ "Intern/Student",
+      grepl("junior", SeniorityLevel, ignore.case = TRUE) ~ "Junior",
+      grepl("senior", SeniorityLevel, ignore.case = TRUE) ~ "Senior",
+      grepl("lead|key|principal", SeniorityLevel, ignore.case = TRUE) ~ "Lead",
+      grepl("entry level", SeniorityLevel, ignore.case = TRUE) ~ "Junior",
+      grepl("head|Work Center", SeniorityLevel, ignore.case = TRUE) ~ "Manager", 
+      grepl("cto|c-level|c level|director|vp", SeniorityLevel, ignore.case = TRUE) ~ "C Level",
+      grepl("no level|no idea", SeniorityLevel, ignore.case = TRUE) ~ NA,
+      TRUE ~ SeniorityLevel
+    ),
+    SeniorityLevel = str_to_title(SeniorityLevel)  
+  )
+
+# Printing the updated seniority levels to verify the changes
+unique(clean_combined_employee$SeniorityLevel)
+```
+
+  +) Fixing format column "Yearly Brutto Salary (EUR)":
+```{r}
+#Removing decimals from data entries
+clean_combined_employee$`Yearly Brutto Salary (EUR)` <- round(as.numeric(clean_combined_employee$`Yearly Brutto Salary (EUR)`))
+
+#Replacing outliers with NAs
+salary_outliers <- boxplot.stats(clean_combined_employee$`Yearly Brutto Salary (EUR)`)$out
+salary_outliers
+
+which(clean_combined_employee$`Yearly Brutto Salary (EUR)` %in% salary_outliers)
+
+clean_combined_employee[which(clean_combined_employee$`Yearly Brutto Salary (EUR)` %in% salary_outliers), "Yearly Brutto Salary (EUR)"] <- NA
+
+##Double check to ensure that all of entries are in the correct format
+summary(clean_combined_employee$`Yearly Brutto Salary (EUR)`)
+
+```
+  
+  +) Fixing inconsistency in the column "EmploymentStatus":
+```{r}
+#Standardizing:
+clean_combined_employee <- clean_combined_employee %>%
+  mutate(EmploymentStatus = case_when(
+    grepl("working|student|intern", EmploymentStatus, ignore.case = TRUE) ~ "Intern",
+    EmploymentStatus == "Full-time position, part-time position, & self-employed (freelancing, tutoring)" ~ "Mixed",
+    EmploymentStatus == "full-time, but 32 hours per week (it was my request, I'm a student)" ~ "Full-time employee",
+    EmploymentStatus == "Full-time position, part-time position, & self-employed (freelancing, tutoring)" ~ "Mixed",
+    TRUE ~ EmploymentStatus
+  ))
+#Double check to ensure that all of entries are in the correct format
+unique(clean_combined_employee$EmploymentStatus)
+```
+
+  +) Fixing inconsistency in the column "Position":
+```{r}
+#Standardizing:
+clean_combined_employee <- clean_combined_employee %>%
+  mutate(
+    Position = case_when(
+       Position == "working student (QA)" ~ "QA Engineer",
+       Position == "Testautomation" ~ "Test Automation",
+       Position == "Testmanager" ~ "Test Manager",
+       Position == "Systemadministrator" ~ "System Administrator", 
+       Position == "Software Architekt" ~ "Software Architect",
+       Position == "Senior Network&Security Eng." ~ "Security Engineer", 
+       grepl("dana|dba", Position, ignore.case = TRUE) ~ "Data Analyst",
+       grepl("sre|sw", Position, ignore.case = TRUE) ~ "Software Engineer",
+       grepl("consult", Position, ignore.case = TRUE) ~ "Consultant",
+       grepl("sales", Position, ignore.case = TRUE) ~ "Sales", 
+       grepl("Fullstack Engineer, Ну Или Software Engineer", Position, ignore.case = TRUE) ~ "Fullstack Engineer", 
+       grepl("analyst", Position, ignore.case = TRUE) & !grepl("data analyst", Position, ignore.case = TRUE) ~ "Business Analyst",
+       grepl("Databengineer", Position, ignore.case = TRUE) ~ "Data Engineer",
+       grepl("(?=.*\\bdata\\b)(?=.*\\bengineer\\b)", Position, ignore.case = TRUE, perl = TRUE) ~ "Data Engineer",
+       grepl("(?=.*\\bsoftware\\b)(?=.*\\bengineer\\b)", Position, ignore.case = TRUE, perl = TRUE) ~ "Software Engineer",
+       grepl("tech.*lead|technical lead", Position, ignore.case = TRUE) ~ "Tech Lead",
+       grepl("teamlead|team lead", Position, ignore.case = TRUE) ~ "Team Lead",
+       grepl("Full-Stack", Position, ignore.case = TRUE) ~ "Fullstack Developer",
+       TRUE ~ (Position),
+    ),
+    Position = str_to_title(str_trim(Position))
+  )
+unique(clean_combined_employee$Position)   
+```
+  +) Fixing inconsistency in column "Lost Job due to COVID19":
+```{r}
+#Modifying inconsistency:
+clean_combined_employee <- clean_combined_employee %>%
+  mutate(
+     `Lost Job due to COVID19`= case_when(
+       `Lost Job due to COVID19` == "i didn't but will be looking for new one because of covid" ~ "No",
+       `Lost Job due to COVID19` == "Lost the job but for different reason" ~ "No",
+       `Lost Job due to COVID19` == "Have been a freelancer at the beginning of year" ~ "No",
+       `Lost Job due to COVID19` == "Leads and project inquiries have slowed down" ~ "No",
+       `Lost Job due to COVID19` == "Laid off for a bit" ~ "No",
+       grepl("No", `Lost Job due to COVID19`, ignore.case = TRUE) ~ "No",
+       grepl("kurzarbeitzeit", `Lost Job due to COVID19`, ignore.case = TRUE) ~ "No",
+       grepl("Yes", `Lost Job due to COVID19`, ignore.case = TRUE) ~ "Yes",
+       TRUE ~ (`Lost Job due to COVID19`),
+    ),
+   `Lost Job due to COVID19` = str_to_title(str_trim(`Lost Job due to COVID19`))
+  )
+unique(clean_combined_employee$`Lost Job due to COVID19`) 
+```
+
+  +) Change type of data in each column:
+```{r}
+clean_combined_employee <- clean_combined_employee %>%
+  mutate(
+    Gender = as.factor(Gender),
+    Age = as.numeric(Age),
+    `Total Years of Experience` = as.numeric(`Total Years of Experience`),
+    `Years of Experience in Germany` = as.numeric(`Years of Experience in Germany`),
+    `Number of Vacation Days` = as.numeric(`Number of Vacation Days`),
+    `Yearly Brutto Salary (EUR)` = as.numeric(`Yearly Brutto Salary (EUR)`),
+    `Yearly Bonus and Stocks (EUR)` = as.numeric(`Yearly Bonus and Stocks (EUR)`),
+    `Annual Bonus And Stocks Last Year` = as.numeric(`Annual Bonus And Stocks Last Year`),
+    `Annual Brutto Salary Last Year` = as.numeric(`Annual Brutto Salary Last Year`),
+    `Kurzarbeit's Hours per Week` = as.numeric(`Kurzarbeit's Hours per Week`),
+    `WFH Additional Monetary from Employer (2020, EUR)` = as.numeric(`WFH Additional Monetary from Employer (2020, EUR)`),
+    EmploymentStatus = as.character(EmploymentStatus),
+    `Lost Job due to COVID19` = as.factor(`Lost Job due to COVID19`)
+  )
+
+```
+
+TASK 3:
+  +) Histogram:
+```{r}
+breaks <- seq(26000, 110000, by = 10000)
+
+ggplot(clean_combined_employee, aes(x = `Yearly Brutto Salary (EUR)`)) +
+  geom_histogram(aes(y = ..count../sum(..count..)), breaks = breaks, fill = "lightblue", color = "black", na.rm = TRUE) +
+  geom_text(aes(y = ..count../sum(..count..), label = sprintf("%.2f%%", ..count../sum(..count..) * 100)), 
+            stat = "bin", vjust = -0.5, color = "black", size = 3, breaks = breaks) +
+  scale_x_continuous(breaks = breaks) +
+  labs(title = "Histogram of Yearly Gross Salaries of IT Professionals",
+       x = "Yearly Gross Salary (EUR)",
+       y = "Percentage of Total") +
+  theme_minimal() 
+
+```
+
+  +) Box plot:
+```{r}
+
+#Calculating statistics
+stats <- boxplot.stats(clean_combined_employee$`Yearly Brutto Salary (EUR)`)$stats
+stats_df <- data.frame(
+  Value = stats)
+
+#Plotting
+ggplot(data = clean_combined_employee, aes(x = factor(1), y = `Yearly Brutto Salary (EUR)`)) +
+  geom_boxplot(fill = "lightblue", color = "black") +
+  geom_text(data = stats_df, aes(x = 1, y = Value, label = stats), size = 3, vjust = -0.5, hjust = -0.1) +
+  labs(title = "Boxplot of Yearly Gross Salaries of IT Professionals",
+       x = "",  
+       y = "Yearly Gross Salary (EUR)") +
+  scale_x_discrete(labels = NULL) +
+  theme_minimal() +
+  scale_y_continuous(labels = scales::comma)
+
+```
+
+TASK 4:
+```{r}
+#Creating a new dataframe to prepare data for plotting
+task_4_data <- clean_combined_employee %>%
+  filter(!is.na(Gender), Gender != "Diverse") %>%  #Removing NAs and Diverse as Diverse has limited records
+  group_by(Gender) %>%
+  summarise(Stats = list(boxplot.stats(`Yearly Brutto Salary (EUR)`)$stats)) %>%
+  unnest_wider(Stats, names_sep = "_") %>%
+  pivot_longer(cols = starts_with("Stats_"), names_to = "Statistic", values_to = "Value", names_prefix = "Stats_") %>%
+  mutate(Statistic = factor(Statistic, levels = c("min", "q1", "median", "q3", "max")))
+
+# Plotting
+ggplot(clean_combined_employee, aes(x = Gender, y = `Yearly Brutto Salary (EUR)`)) +
+  geom_boxplot(aes(fill = Gender), color = "black") +
+  geom_text(data = task_4_data, aes(x = Gender, y = Value, label = round(Value, 2)),
+            position = position_dodge(width = 0.75), vjust = -0.5, hjust = 1, size = 3, color = "black") +
+  labs(title = "Box Plot of Yearly Gross Salary by Gender",
+       x = "Gender",
+       y = "Yearly Gross Salary (EUR)") +
+  scale_x_discrete(limits = unique(task_4_data$Gender)) +
+  theme_minimal() +
+  scale_y_continuous(labels = scales::comma)
+
+```
+
+
+TASK 5:
+  1.Relationship between salary and total years of experience
+```{r}
+#Preparing data to plot the scatter plot:
+task5_data_exp_year <- clean_combined_employee %>%
+  filter(!is.na(`Total Years of Experience`), !is.na(`Yearly Brutto Salary (EUR)`))
+
+#Building a linear model for the scatter plot:
+model <- lm(`Yearly Brutto Salary (EUR)` ~ `Total Years of Experience`, data = task5_data_exp_year)
+
+#Getting r square
+model_summary <- broom::glance(model)
+r_squared <- model_summary$r.squared  
+
+#Plotting
+ggplot(task5_data_exp_year, aes(x = `Total Years of Experience`, y = `Yearly Brutto Salary (EUR)`)) +
+  geom_point() + 
+  geom_smooth(method = "lm", color = "red") +
+  annotate("text", x = Inf, y = Inf, label = sprintf("R^2 = %.2f", r_squared), hjust = 3, vjust = 7, color = "black", size = 4) +
+  labs(title = "Scatter Plot of Total Years of Experience vs Yearly Gross Salary",
+       x = "Total Years of Experience",
+       y = "Yearly Gross Salary (EUR)") +
+  theme_minimal() +
+  scale_y_continuous(labels = scales::comma)
+
+```
+
+  2. Relationship between salary and employment status
+```{r}
+#Preparing data to plot
+task5_data_emp_status <- clean_combined_employee %>%
+  filter(!is.na(EmploymentStatus), !is.na(`Yearly Brutto Salary (EUR)`))
+
+#Plotting:
+ggplot(task5_data_emp_status, aes(x = EmploymentStatus, y = `Yearly Brutto Salary (EUR)`, fill = EmploymentStatus)) +
+  geom_boxplot() +
+  labs(title = "Box Plot of Yearly Gross Salary by Employment Status",
+       x = "Employment Status",
+       y = "Yearly Gross Salary (EUR)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 0.75)) +
+  scale_y_continuous(labels = scales::comma)
+
+```
+
+  3. Relationship between salary and company size
+```{r}
+task5_data_comp_size <- clean_combined_employee %>%
+  filter(!is.na(CompanySize))
+
+ggplot(task5_data_comp_size, aes(x = CompanySize, y = `Yearly Brutto Salary (EUR)`)) +
+  geom_boxplot(aes(fill = CompanySize), color = "black", na.rm = TRUE) +
+  labs(title = "Box Plot of Yearly Gross Salary by Company Size",
+       x = "Company Size",
+       y = "Yearly Gross Salary (EUR)") +
+  theme_minimal() +
+  scale_y_continuous(labels = scales::comma)
+```
+
+  4. Relationship between salary and position
+```{r}
+salary_by_position <- clean_combined_employee %>%
+  group_by(Position) %>%
+  filter(!is.na(Position), !is.na(`Yearly Brutto Salary (EUR)`)) %>%
+  summarise(Count = n(), AverageSalary = round(mean(`Yearly Brutto Salary (EUR)`, na.rm = TRUE))) %>%
+  arrange(desc(AverageSalary)) %>%
+  filter(Count > 2) %>% #removing the variables have less than 2 counts to remove noise in analysis, as they have too limited records for effective analysis
+  slice_head(n = 10)
+
+# Create a bar chart
+ggplot(salary_by_position, aes(x = reorder(Position, AverageSalary), y = AverageSalary)) +
+  geom_bar(stat = "identity", fill = "pink") +
+  labs(title = "Top 10 Average Yearly Gross Salary by Position",
+       x = "Position",
+       y = "Average Yearly Gross Salary (EUR)") +
+  theme_minimal() +
+  geom_text(aes(label = scales::comma(AverageSalary)), vjust = -0.5, color = "black", size = 2.5) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+  5. Relationship between salary and seniority level: 
+```{r}
+salary_by_seniority <- clean_combined_employee %>%
+  group_by(SeniorityLevel) %>%
+  filter(!is.na(SeniorityLevel), !is.na(`Yearly Brutto Salary (EUR)`)) %>%
+  dplyr::summarize(AverageSalary = mean(`Yearly Brutto Salary (EUR)`, na.rm = TRUE)) %>%
+  arrange(desc(AverageSalary))
+
+#Plotting:
+ggplot(salary_by_seniority, aes(x = reorder(SeniorityLevel, AverageSalary), y = AverageSalary)) +
+  geom_bar(stat = "identity", fill = "pink") +
+  labs(title = "Average Salaries by Seniority Level",
+       x = "Seniority Level",
+       y = "Average Salary (EUR)") +
+  theme_minimal() +
+  geom_text(aes(label = scales::comma(AverageSalary)), vjust = -0.3, color = "black", size = 2.5) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
+```
+
+
+
+
+
+ 
+
+
+
+
+
+
+
+
